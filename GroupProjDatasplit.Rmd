@@ -1,0 +1,42 @@
+---
+title: "Final project"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(tidyverse)
+library(caret)
+library(ROCR)
+library(MLmetrics)
+library(mltools)
+library(rpart.plot)
+```
+importing datasets
+```{r}
+#https://www.kaggle.com/datasets/patelprashant/employee-attrition
+attrition <- read.csv('/Users/peterlayne/Downloads/WA_Fn-UseC_-HR-Employee-Attrition 2.csv')
+str(attrition)
+
+```
+
+```{r}
+char <- names(select_if(attrition, is.character))
+attrition[char] <- lapply(attrition[char], as.factor)
+str(attrition)
+table(attrition$JobRole)
+
+intstofac <- c("Education", "EnvironmentSatisfaction", "JobInvolvement", "JobLevel", "JobSatisfaction", "PerformanceRating", "RelationshipSatisfaction", "StockOptionLevel", "WorkLifeBalance")
+attrition[intstofac] <- lapply(attrition[intstofac], as.factor)
+str(attrition)
+```
+
+
+
+
