@@ -19,6 +19,8 @@ library(mltools)
 library(rpart.plot)
 library(Hmisc)
 library(corrplot)
+library(randomForest)
+
 ```
 importing datasets
 ```{r}
@@ -155,5 +157,39 @@ attrition_data_eval <- caret::confusionMatrix(attrition_predictions,
                                               )
 attrition_data_eval
 ```
+#Random Forest
+```{r}
+mytry_tune <- function(x){
+  xx <- dim(x)[2]-1
+  sqrt(xx)
+}
 
+
+mytry_tune(attrition) #6
+
+
+attrition_RF = randomForest(as.factor(Attrition)~.,
+                            train,
+                            ntree = 1000,       
+                            mtry = 6,         
+                            replace = TRUE,     
+                            sampsize = 100,     
+                            nodesize = 5,       
+                            importance = TRUE,   
+                            proximity = FALSE,    
+                            norm.votes = TRUE,  
+                            do.trace = TRUE,     
+                            keep.forest = TRUE, 
+                            keep.inbag = TRUE) 
+attrition_RF
+
+#Evaluating on test data
+attrition_test_predict = predict(attrition_RF,
+                                 test,
+                                 type ="response",
+                                 predict.all = TRUE)
+str(attrition_test_predict)
+confusionMatrix(as.factor(attrition_test_predict$aggregate),as.factor(test$Attrition), positive="1",
+                dnn=c("Prediction","Actual"), mode ="everything")
+```
 
