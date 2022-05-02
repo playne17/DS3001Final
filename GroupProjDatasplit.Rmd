@@ -17,6 +17,8 @@ library(ROCR)
 library(MLmetrics)
 library(mltools)
 library(rpart.plot)
+library(Hmisc)
+library(corrplot)
 ```
 importing datasets
 ```{r}
@@ -35,8 +37,54 @@ table(attrition$JobRole)
 intstofac <- c("Education", "EnvironmentSatisfaction", "JobInvolvement", "JobLevel", "JobSatisfaction", "PerformanceRating", "RelationshipSatisfaction", "StockOptionLevel", "WorkLifeBalance")
 attrition[intstofac] <- lapply(attrition[intstofac], as.factor)
 str(attrition)
+
+attrition$PercentSalaryHike <- attrition$PercentSalaryHike/100
+str(attrition)
+
+#Dropping employee count, StandardHours as it is all the same values
+attrition <- select(attrition,-c("EmployeeCount"))
+attrition <- select(attrition,-c("StandardHours"))
 ```
 
 
+#WHEN WE WANT TO NORMALIZE HERE IS THE CODE.
+attrition_normalize <- preProcess(attrition, method=c("center","scale"))
+norm1 <- predict(attrition_normalize, attrition)
+summary(norm1)
+str(norm1)
 
+
+
+```{r}
+#Generating corrplot
+
+#generating df of only numeric values
+numerics <- names(select_if(attrition, is.numeric))
+attrition_numeric <- attrition[numerics]
+
+corr_matrix_attrition <- cor(attrition_numeric)
+corrplot(corr_matrix_attrition, method ="number")
+#NEED THIS CORRPLOT TO SHOW CORRELATION OF VARIABLES TO ATTRITION WHICH IS A FACTOR SO ????
+
+par(mar=c(1,1,1,1))
+
+column_hists <- hist.data.frame(attrition_numeric, mtitl=TRUE)
+
+  
+  
+#hist.data.frame(df) filter for numeric first
+```
+
+Normalize and select which to cluster with
+
+attrition[numerics] <- lapply(attrition[numerics], normalize)
+str(attrition)
+attr_cluster <-attrition[numerics] 
+str(attr_cluster )
+
+
+```{r}
+str(attrition)
+attr <- caret::createDataPartition()
+```
 
