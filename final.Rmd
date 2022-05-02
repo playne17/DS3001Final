@@ -56,7 +56,7 @@ attrition_numeric <- attrition[numerics]
 corr_matrix_attrition <- cor(attrition_numeric)
 corrplot(corr_matrix_attrition, method ="number")
 ```
-
+#Partitioning the Data
 ```{r}
 str(attrition)
 set.seed(1999)
@@ -84,7 +84,7 @@ dim(train)
 dim(test) 
 dim(tune)
 ```
-
+#Building and Visualizing the Basic Decision Tree
 ```{r}
 str(train)
 features <- train[,-2]#dropping Attrition because it's target variable. 
@@ -94,15 +94,12 @@ target_var <- train$Attrition
 str(features)
 str(target_var)
 
-#Step 1: Cross validation:
-#making 10 splits, doing it 5 times over, randomly each time. Combining all of those 50 models together to create an average. Binary, so 2 classes.
 fitControl <- trainControl(method = "repeatedcv",
                           number = 10,
                           repeats = 5,
                           classProbs = TRUE,
                           summaryFunction = twoClassSummary) 
 
-#Step 3: Train the models
 set.seed(1985)
 attrition_model <- train(x=features,
                           y=target_var,
@@ -115,11 +112,9 @@ varImp(attrition_model)
 attrition_model$results
 plot(attrition_model)
 rpart.plot(attrition_model$finalModel, type=4, extra=101)
-
 ```
-
+#Adjusting the Treshold
 ```{r}
-#adjusting the threshold
 plot(density(attr_pred_tune$Yes))
 adjust_thres <- function(x, y, z) {
   #x=pred_probabilities, y=threshold, z=tune_outcome
@@ -132,7 +127,7 @@ adjust_thres(attr_pred_tune$Yes,y=.8,tune$Attrition) #.8 looks better
 adjust_thres(attr_pred_tune$Yes,y=.4,tune$Attrition)
 
 ```
-
+#Expanding the simple decision tree grid
 ```{r}
 tree.grid <- expand.grid(maxdepth=c(5,7,9,11))
 set.seed(1984)
@@ -147,7 +142,7 @@ attrition_model_1
 str(attrition)
 #the expanded grid doesn't really help, I'll keep a max depth of 5
 ```
-
+#Analyzing the simple decision tree
 ```{r}
 attrition_predictions <- predict(attrition_model,test,"raw",test$Attrition)
 view(attrition_predictions)
@@ -160,3 +155,5 @@ attrition_data_eval <- caret::confusionMatrix(attrition_predictions,
                                               )
 attrition_data_eval
 ```
+
+
