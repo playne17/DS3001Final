@@ -1,0 +1,220 @@
+---
+title: "Final project"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(tidyverse)
+library(caret)
+library(ROCR)
+library(MLmetrics)
+library(mltools)
+library(rpart.plot)
+library(Hmisc)
+library(corrplot)
+library(SuperLearner)
+```
+importing datasets
+```{r}
+#https://www.kaggle.com/datasets/patelprashant/employee-attrition
+attrition <- read.csv('/Users/peterlayne/Downloads/WA_Fn-UseC_-HR-Employee-Attrition 2.csv')
+str(attrition)
+
+```
+
+```{r}
+char <- names(select_if(attrition, is.character))
+attrition[char] <- lapply(attrition[char], as.factor)
+str(attrition)
+table(attrition$JobRole)
+
+intstofac <- c("Education", "EnvironmentSatisfaction", "JobInvolvement", "JobLevel", "JobSatisfaction", "PerformanceRating", "RelationshipSatisfaction", "StockOptionLevel", "WorkLifeBalance")
+attrition[intstofac] <- lapply(attrition[intstofac], as.factor)
+str(attrition)
+
+attrition$PercentSalaryHike <- attrition$PercentSalaryHike/100
+str(attrition)
+
+#Dropping employee count, StandardHours as it is all the same values
+attrition <- select(attrition,-c("EmployeeCount"))
+attrition <- select(attrition,-c("StandardHours"))
+```
+
+
+#WHEN WE WANT TO NORMALIZE HERE IS THE CODE.
+attrition_normalize <- preProcess(attrition, method=c("center","scale"))
+norm1 <- predict(attrition_normalize, attrition)
+summary(norm1)
+str(norm1)
+
+
+
+```{r}
+#Generating corrplot
+
+#generating df of only numeric values
+numerics <- names(select_if(attrition, is.numeric))
+attrition_numeric <- attrition[numerics]
+
+corr_matrix_attrition <- cor(attrition_numeric)
+corrplot(corr_matrix_attrition, method ="number")
+#NEED THIS CORRPLOT TO SHOW CORRELATION OF VARIABLES TO ATTRITION WHICH IS A FACTOR SO ????
+
+par(mar=c(1,1,1,1))
+
+column_hists <- hist.data.frame(attrition_numeric, mtitl=TRUE)
+
+  
+  
+#hist.data.frame(df) filter for numeric first
+```
+
+Normalize and select which to cluster with
+
+attrition[numerics] <- lapply(attrition[numerics], normalize)
+str(attrition)
+attr_cluster <-attrition[numerics] 
+str(attr_cluster )
+
+Data partition
+```{r}
+str(attrition)
+attr_index <- caret::createDataPartition(attrition$Attrition, times=1, p=.7, groups = 1, list = FALSE)
+
+train <- attrition[attr_index,]
+test_tune <- attrition[-attr_index,]
+ttind <- caret::createDataPartition(test_tune$Attrition, times=1, p=.5, groups = 1, list = FALSE)
+
+tune <- test_tune[ttind,]
+test <- test_tune[-ttind,]
+dim(train)
+dim(tune)
+dim(test)
+```
+
+Building Tree
+```{r}
+str(train)
+t
+features <- train[,-2]
+target <- train$Attrition
+fitControl <- trainControl(method = "repeatedcv",
+                          number = 10,
+                          repeats = 5,
+                          classProbs = TRUE,
+                          summaryFunction = twoClassSummary) 
+attr_mdl <- train(x=features,
+                y=target,
+                method="rpart2",
+                trControl=fitControl,
+                metric="ROC")
+attr_mdl
+varImp(attr_mdl)
+rpart.plot(attr_mdl$finalModel, type=4,extra=101)
+```
+Deepening
+```{r}
+tree.grid <- expand.grid(maxdepth=c(3:20))
+attr_mdl_depth <- train(x=features,
+                y=target,
+                method="rpart2",
+                trControl=fitControl,
+                metric="ROC")
+
+attr_mdl_depth$results
+varImp(attr_mdl_depth)
+```
+New model with restricted variables
+```{r}
+used_vars <- c("MonthlyIncome", "TotalWorkingYears", "YearsWithCurrManager", "JobRole", "YearsAtCompany", "Age", "OverTime", "EnvironmentSatisfaction", "JobLevel", "NumCompaniesWorked")
+
+new_train <- train[used_vars]
+
+
+attr_mdl_cut <-train(x=new_train,
+                y=target,
+                method="rpart2",
+                trControl=fitControl,
+                metric="Sensitivity") 
+attr_mdl_cut
+
+predictandCM<- function(model,data,modeltype,ref)
+{
+  #model using, data going into the model, and output type for predict function
+  pred <-predict(model,data,type=modeltype)
+  confusionMatrix(pred, reference=ref, positive = 'Yes', mode= 'everything')
+}
+predictandCM(attr_mdl_depth, tune, "raw", tune$Attrition)
+
+
+```
+Over Sampling the positive class
+```{r}
+balanced_set <-  ovun.sample(Attrition~., data=train,
+                                N=nrow(train), p=0.5, 
+                                seed=1, method="both")$data
+
+str(balanced_set)
+table(balanced_set$Attrition)
+target_over <- balanced_set$Attrition
+balanced_features <- balanced_set[-2]
+over_sample_mdl <- train(x=balanced_features,
+                y=target_over,
+                method="rpart2",
+                trControl=fitControl,
+                tuneGrid=tree.grid,
+                metric="ROC") 
+over_sample_mdl
+
+balanced_cut <- balanced_set[used_vars]
+
+over_and_cut_mdl <-  train(x=balanced_cut,
+                y=target_over,
+                method="rpart2",
+                trControl=fitControl,
+                tuneGrid=tree.grid,
+                metric="ROC") 
+over_and_cut_mdl
+```
+Random Forest
+```{r}
+balanced_cut["Attrition"] <- balanced_set$Attrition
+mytry_tune(balanced_set)
+cut_RF <- randomForest((Attrition)~., balanced_cut, ntree= 500, mtry=6, replace= TRUE, sampsize= 200, nodesize=5, importance= TRUE, proximity= FALSE, norm.votes= TRUE, do.trace= TRUE, keep.forest= TRUE, keep.inbag= TRUE)
+
+cut_RF
+
+hist(treesize(cut_RF, terminal = TRUE), main = "Tree Size")
+dev.off()
+
+cut_rf_predict <-  predict(cut_RF,     
+                            test,     
+                            type = "response",
+                            predict.all = TRUE)
+confusionMatrix(as.factor(cut_rf_predict$aggregate), as.factor(test$Attrition),positive = "Yes", dnn=c("Prediction", "Actual"), mode = "everything") 
+```
+
+
+
+Building kNN model
+```{r} 
+#Normalizing data
+
+normalize <- function(x){
+  (x-min(x)) / (max(x) - min(x))
+}
+
+str(attrition)
+
+attrition_numeric_cols <- names(select_if(attrition, is.numeric))
+attrition_numeric_cols
+
+attrition[] #KEEP WORKING HERE 7:26 PM 5/2
+
