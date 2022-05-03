@@ -1,0 +1,351 @@
+---
+title: "Final project"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(tidyverse)
+library(caret)
+library(ROCR)
+library(MLmetrics)
+library(mltools)
+library(rpart.plot)
+library(Hmisc)
+library(corrplot)
+library(SuperLearner)
+library(class) #for kNN model
+```
+importing datasets
+```{r}
+#https://www.kaggle.com/datasets/patelprashant/employee-attrition
+attrition <- read.csv('/Users/peterlayne/Downloads/WA_Fn-UseC_-HR-Employee-Attrition 2.csv')
+str(attrition)
+```
+
+```{r}
+char <- names(select_if(attrition, is.character))
+attrition[char] <- lapply(attrition[char], as.factor)
+str(attrition)
+table(attrition$JobRole)
+intstofac <- c("Education", "EnvironmentSatisfaction", "JobInvolvement", "JobLevel", "JobSatisfaction", "PerformanceRating", "RelationshipSatisfaction", "StockOptionLevel", "WorkLifeBalance")
+attrition[intstofac] <- lapply(attrition[intstofac], as.factor)
+str(attrition)
+attrition$PercentSalaryHike <- attrition$PercentSalaryHike/100
+str(attrition)
+#Dropping employee count, StandardHours as it is all the same values
+attrition <- select(attrition,-c("EmployeeCount"))
+attrition <- select(attrition,-c("StandardHours"))
+```
+
+
+#WHEN WE WANT TO NORMALIZE HERE IS THE CODE.
+attrition_normalize <- preProcess(attrition, method=c("center","scale"))
+norm1 <- predict(attrition_normalize, attrition)
+summary(norm1)
+str(norm1)
+
+
+
+```{r}
+#Generating corrplot
+#generating df of only numeric values
+numerics <- names(select_if(attrition, is.numeric))
+attrition_numeric <- attrition[numerics]
+corr_matrix_attrition <- cor(attrition_numeric)
+corrplot(corr_matrix_attrition, method ="number")
+#NEED THIS CORRPLOT TO SHOW CORRELATION OF VARIABLES TO ATTRITION WHICH IS A FACTOR SO ????
+par(mar=c(1,1,1,1))
+column_hists <- hist.data.frame(attrition_numeric, mtitl=TRUE)
+  
+  
+#hist.data.frame(df) filter for numeric first
+```
+
+Normalize and select which to cluster with
+
+attrition[numerics] <- lapply(attrition[numerics], normalize)
+str(attrition)
+attr_cluster <-attrition[numerics] 
+str(attr_cluster )
+
+Data partition
+```{r}
+str(attrition)
+attr_index <- caret::createDataPartition(attrition$Attrition, times=1, p=.7, groups = 1, list = FALSE)
+train <- attrition[attr_index,]
+test_tune <- attrition[-attr_index,]
+ttind <- caret::createDataPartition(test_tune$Attrition, times=1, p=.5, groups = 1, list = FALSE)
+tune <- test_tune[ttind,]
+test <- test_tune[-ttind,]
+dim(train)
+dim(tune)
+dim(test)
+```
+
+Building Tree
+```{r}
+str(train)
+t
+features <- train[,-2]
+target <- train$Attrition
+fitControl <- trainControl(method = "repeatedcv",
+                          number = 10,
+                          repeats = 5,
+                          classProbs = TRUE,
+                          summaryFunction = twoClassSummary) 
+attr_mdl <- train(x=features,
+                y=target,
+                method="rpart2",
+                trControl=fitControl,
+                metric="ROC")
+attr_mdl
+varImp(attr_mdl)
+rpart.plot(attr_mdl$finalModel, type=4,extra=101)
+```
+Deepening
+```{r}
+tree.grid <- expand.grid(maxdepth=c(3:20))
+attr_mdl_depth <- train(x=features,
+                y=target,
+                method="rpart2",
+                trControl=fitControl,
+                metric="ROC")
+attr_mdl_depth$results
+varImp(attr_mdl_depth)
+```
+New model with restricted variables
+```{r}
+used_vars <- c("MonthlyIncome", "TotalWorkingYears", "YearsWithCurrManager", "JobRole", "YearsAtCompany", "Age", "OverTime", "EnvironmentSatisfaction", "JobLevel", "NumCompaniesWorked")
+new_train <- train[used_vars]
+attr_mdl_cut <-train(x=new_train,
+                y=target,
+                method="rpart2",
+                trControl=fitControl,
+                metric="Sensitivity") 
+attr_mdl_cut
+predictandCM<- function(model,data,modeltype,ref)
+{
+  #model using, data going into the model, and output type for predict function
+  pred <-predict(model,data,type=modeltype)
+  confusionMatrix(pred, reference=ref, positive = 'Yes', mode= 'everything')
+}
+predictandCM(attr_mdl_depth, tune, "raw", tune$Attrition)
+```
+Over Sampling the positive class
+```{r}
+balanced_set <-  ovun.sample(Attrition~., data=train,
+                                N=nrow(train), p=0.5, 
+                                seed=1, method="both")$data
+str(balanced_set)
+table(balanced_set$Attrition)
+target_over <- balanced_set$Attrition
+balanced_features <- balanced_set[-2]
+over_sample_mdl <- train(x=balanced_features,
+                y=target_over,
+                method="rpart2",
+                trControl=fitControl,
+                tuneGrid=tree.grid,
+                metric="ROC") 
+over_sample_mdl
+balanced_cut <- balanced_set[used_vars]
+over_and_cut_mdl <-  train(x=balanced_cut,
+                y=target_over,
+                method="rpart2",
+                trControl=fitControl,
+                tuneGrid=tree.grid,
+                metric="ROC") 
+over_and_cut_mdl
+```
+Random Forest
+```{r}
+balanced_cut["Attrition"] <- balanced_set$Attrition
+mytry_tune(balanced_set)
+cut_RF <- randomForest((Attrition)~., balanced_cut, ntree= 500, mtry=6, replace= TRUE, sampsize= 200, nodesize=5, importance= TRUE, proximity= FALSE, norm.votes= TRUE, do.trace= TRUE, keep.forest= TRUE, keep.inbag= TRUE)
+cut_RF
+hist(treesize(cut_RF, terminal = TRUE), main = "Tree Size")
+dev.off()
+cut_rf_predict <-  predict(cut_RF,     
+                            test,     
+                            type = "response",
+                            predict.all = TRUE)
+confusionMatrix(as.factor(cut_rf_predict$aggregate), as.factor(test$Attrition),positive = "Yes", dnn=c("Prediction", "Actual"), mode = "everything") 
+```
+
+
+
+Building kNN model
+Must have library(class) installed
+
+#Normalizing Data
+```{r} 
+#Normalizing data
+normalize <- function(x){
+  (x-min(x)) / (max(x) - min(x))
+}
+
+
+
+attrition_numeric_cols <- names(select_if(attrition, is.numeric))
+attrition_numeric_cols
+attrition_normalize <- attrition
+attrition_normalize[attrition_numeric_cols] <- lapply(attrition_normalize[attrition_numeric_cols], normalize)
+str(attrition_normalize)
+
+
+
+#Removing StandardHours and EmployeeCount as every value is NA and removing Over18 as every value is yes
+#Be mindful that these columns were already removed if you run this code from the top, my global variables still had these columns for some reason
+attrition_normalize <- select(attrition_normalize, -c("StandardHours","Over18","EmployeeCount"))
+
+
+
+
+```
+
+#One Hot encoding
+```{r}
+#One Hot encoding
+attrition_normalize_1h <- one_hot(as.data.table(attrition_normalize),cols = "auto",sparsifyNAs = TRUE,naCols = FALSE, dropCols = TRUE,dropUnusedLevels = TRUE)
+
+str(attrition_normalize_1h)
+
+#Removing one hot encode for negative instance of target variable
+# as this is perfectly correlated with positive instances of the target variable this will make the model reliant on data it wouldn't have in a real life application
+#Removing one hot encode for negative instance of Attrition_No, Gender_Male, OverTime_No, and PerformanceRating_3 as these all are factors with two options meaning the negative 1h encoded column is redundant
+
+
+attrition_normalize_1h <- select(attrition_normalize_1h, -c("Attrition_No","Gender_Male","OverTime_No", "PerformanceRating_3"))
+str(attrition_normalize_1h)
+
+
+```
+
+#Data Partitioning
+```{r}
+#take a part of the dataset that is 70% of the values in the dataset
+attrition_normalize_1h_70_pct_part <- caret::createDataPartition(attrition_normalize_1h$`Attrition_Yes`,
+                                           times=1,#number of splits
+                                           p = 0.70,#percentage of split
+                                           groups=1,
+                                           list=FALSE)
+attrition_normalize_1h_train <- attrition_normalize_1h[attrition_normalize_1h_70_pct_part,]
+
+attrition_normalize_1h_tune_and_test <- attrition_normalize_1h[-attrition_normalize_1h_70_pct_part,]
+
+attrition_normalize_1h_tune_and_test_index <- createDataPartition(attrition_normalize_1h_tune_and_test$`Attrition`,
+                                           p = .5,
+                                           list = FALSE,
+                                           times = 1)
+
+attrition_normalize_1h_tune <- attrition_normalize_1h_tune_and_test[attrition_normalize_1h_tune_and_test_index,]
+
+attrition_normalize_1h_test <- attrition_normalize_1h_tune_and_test[attrition_normalize_1h_tune_and_test_index,]
+
+dim(attrition_normalize_1h_train)
+dim(attrition_normalize_1h_tune)
+dim(attrition_normalize_1h_test)
+
+table(attrition_normalize_1h_train$Attrition_Yes)
+table(attrition_normalize_1h_tune$Attrition_Yes)
+table(attrition_normalize_1h_test$Attrition_Yes)
+#Prevalence rates are approximately equal
+```
+
+#Setting up kNN model
+```{r}
+set.seed(2049)
+attrition_7NN <- knn(train = attrition_normalize_1h_train,
+                test = attrition_normalize_1h_tune,
+                cl = attrition_normalize_1h_train$Attrition_Yes,
+                k = 7,
+                use.all = TRUE,
+                prob = TRUE)
+
+#viewing output
+str(attrition_7NN)
+table(attrition_7NN)
+
+confusionMatrix(as.factor(attrition_7NN), as.factor(attrition_normalize_1h_tune$Attrition_Yes), positive = "1", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+
+
+```
+
+#Selecting the correct k
+```{r}
+chooseK <- function(k, train_set, val_set, train_class, val_class){
+  set.seed(1)
+  class_knn = knn(train = train_set,
+                  test = val_set,
+                  cl = train_class,
+                  k = k,
+                  use.all = TRUE)
+  confusion_matrix = table(class_knn, val_class)
+  
+  #calculate accuracy
+  accuracy = sum(confusion_matrix[row(confusion_matrix) == col(confusion_matrix)]) / sum(confusion_matrix)
+  cbind( k = k, accuracy = accuracy)
+}
+
+knn_k_tryer = sapply(seq(1,21, by = 2), 
+                     function(x) chooseK(x,
+                      train_set = attrition_normalize_1h_train,
+                      val_set = attrition_normalize_1h_tune,
+                      train_class = attrition_normalize_1h_train$Attrition_Yes,
+                      val_class = attrition_normalize_1h_tune$Attrition_Yes))
+
+view(knn_k_tryer)
+
+
+#preparing accuracy data at different k values for graphing
+knn_k_tryer = tibble(k = knn_k_tryer[1,],
+                             accuracy = knn_k_tryer[2,])
+
+ggplot(knn_k_tryer,
+       aes(x = k, y = accuracy)) +
+  geom_line(color = "orange", size = 1.5) +
+  geom_point(size = 3)
+
+#Ideal k is 7
+
+
+```
+
+### Adjusting the threshold
+```{r}
+
+attrition_prob_1 <- tibble(attr(attrition_7NN, "prob"))
+
+attrition_final_model <- tibble(attrition_k_prob = attrition_prob_1$`attr(attrition_7NN, "prob")`, attrition_prediction = attrition_7NN, attrition_target = attrition_normalize_1h_tune$Attrition_Yes)
+
+#converting to the likelihood that a certain individual will be in the positive class of the target variable
+attrition_final_model$attrition_pos_prec <- ifelse(attrition_final_model$attrition_prediction == 0, 1-attrition_final_model$attrition_k_prob, attrition_final_model$attrition_k_prob )
+
+#Needs to be a factor to be correctly  
+attrition_final_model$attrition_target <- as.factor(attrition_final_model$attrition_target)
+
+view(attrition_final_model)
+
+densityplot(attrition_final_model$attrition_pos_prec)
+
+#Many of the  attrition positive probabilities are 0.000 meaning the model is saying there is a 0% chance that that person is attriting. problem???
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
