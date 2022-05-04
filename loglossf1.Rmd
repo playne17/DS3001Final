@@ -1,0 +1,22 @@
+---
+title: "log_loss and F1"
+author: "Harrison Listen"
+date: "5/3/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+attrition_5NN_prob <- tibble(attr(attrition_5NN, "prob"))
+
+attrition_5NN_final <- tibble(k_prob=attrition_5NN_prob$`attr(attrition_5NN, "prob")`,pred=attrition_5NN,target=attrition_normalize_1h_tune$Attrition_Yes)
+
+attrition_5NN_final$pos_prec <- ifelse(attrition_5NN_final$pred == 0, 1-attrition_5NN_final$k_prob, attrition_5NN_final$k_prob)
+
+LogLoss(as.numeric(attrition_5NN_final$pos_prec), as.numeric(attrition_5NN_final$target))
+
+F1_Score(y_pred = attrition_5NN_final$pred, y_true = attrition_5NN_final$target, positive = "1")
+```
