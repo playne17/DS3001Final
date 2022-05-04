@@ -3,6 +3,8 @@ title: "log_loss and F1"
 author: "Harrison Listen"
 date: "5/3/2022"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -19,4 +21,17 @@ attrition_5NN_final$pos_prec <- ifelse(attrition_5NN_final$pred == 0, 1-attritio
 LogLoss(as.numeric(attrition_5NN_final$pos_prec), as.numeric(attrition_5NN_final$target))
 
 F1_Score(y_pred = attrition_5NN_final$pred, y_true = attrition_5NN_final$target, positive = "1")
+
+table(attrition$Attrition)
+237/(1233+237)
+#precision = 0.1612
+
+237/237
+#recall = 1
+
+#f1 = 2*(0.1612*1) / (0.1612+1)
+2*(0.1612*1) / (0.1612+1)
+#baseline f1 score = 0.2776
 ```
+https://www.statology.org/what-is-a-good-f1-score/
+- this is how you create the baseline for f1
