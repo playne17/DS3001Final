@@ -1,0 +1,384 @@
+---
+title: "Final submission"
+output::
+  html_document:
+    toc: yes
+    theme: journal
+    toc_float: yes
+editor_options:
+  chunk_output_type: console
+---
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+```
+
+```{r, include=FALSE}
+library(readr)
+library(tidyverse)
+library(caret)
+library(ROCR)
+library(MLmetrics)
+library(mltools)
+library(rpart.plot)
+library(Hmisc)
+library(corrplot)
+library(SuperLearner)
+library(ROSE)
+library(tidyr)
+library(ggplot2)
+library(plotly)
+library(randomForest)
+library(data.table)
+library(class)
+```
+## Question and data background:
+
+### Question
+Employee turnover is costly. An inability to retain talent forces a company to frequently retrain employees. Additionally general lack of continuity within a company creates a variety of business challenges. This lead us to ask the question: Can we predict when an employee is likely to leave? If so we could use a targeted raise program in order to keep attrition rates low. 
+
+### Dataset
+Included below is a summary of the data set, prior to processing. It includes information about the amount of time an employee has spent at their current job, with their current manager, how far their commute is, and a variety of other variables that provide information on their current work environment.
+```{r}
+attrition <- read.csv('/Users/peterlayne/Downloads/WA_Fn-UseC_-HR-Employee-Attrition 2.csv')
+
+str(attrition)
+```
+
+```{r, include=FALSE}
+char <- names(select_if(attrition, is.character))
+attrition[char] <- lapply(attrition[char], as.factor)
+str(attrition)
+table(attrition$JobRole)
+intstofac <- c("Education", "EnvironmentSatisfaction", "JobInvolvement", "JobLevel", "JobSatisfaction", "PerformanceRating", "RelationshipSatisfaction", "StockOptionLevel", "WorkLifeBalance")
+attrition[intstofac] <- lapply(attrition[intstofac], as.factor)
+str(attrition)
+attrition$PercentSalaryHike <- attrition$PercentSalaryHike/100
+str(attrition)
+#Dropping employee count, StandardHours as it is all the same values
+attrition <- select(attrition,-c("EmployeeCount"))
+attrition <- select(attrition,-c("StandardHours"))
+attrition <- select(attrition, -c("Gender"))
+attrition <- select(attrition, -c("MaritalStatus"))
+```
+
+## Exploratory Data Analysis
+
+### Correlogram
+```{r}
+#Generating corrplot
+#generating df of only numeric values
+numerics <- names(select_if(attrition, is.numeric))
+attrition_numeric <- attrition[numerics]
+corr_matrix_attrition <- cor(attrition_numeric)
+corrplot(corr_matrix_attrition, method ="number")
+```
+
+### Clustering Attempt
+After checking our correlogram we decided to cluster with all 15 numeric values, however, our clustering was quite unsuccessful. The Withinss is displayed below.
+
+```{r}
+normalize <- function(x){
+  (x-min(x)) / (max(x) - min(x))
+}
+attr_num_clust <- attrition[numerics]
+attr_cluster <-attrition[numerics] 
+attr_cluster[numerics] <- lapply(attrition[numerics], normalize)
+cluster_attempt <- kmeans(attr_cluster, centers=2, algorithm = 'Lloyd')
+cluster_attempt$betweenss / cluster_attempt$totss
+attr_num_clust$clusters <- as.factor(cluster_attempt$cluster)
+attr_num_clust$attrition <- attrition$Attrition
+fig <- plot_ly(data=attr_num_clust, 
+               type = "scatter",
+               mode="markers",
+               symbol = ~clusters,
+               x = ~MonthlyIncome, 
+               y = ~TotalWorkingYears,
+               color = ~attrition)
+fig
+
+```
+
+
+### Histogram of Numeric Columns
+```{r, message=FALSE}
+attr_num <- attrition[numerics]
+data_attr <- pivot_longer(attr_num, colnames(attr_num))
+data_long <-as.data.frame(data_attr)
+ggp1 <- ggplot(data_long, aes(x = value)) +    # Draw each column as histogram
+  geom_histogram() + 
+  facet_wrap(~ name, scales = "free")
+ggp1
+
+```
+
+## Methods
+
+### Rpart2 Decision Tree
+Data partition
+```{r, include= FALSE}
+str(attrition)
+set.seed(1205)
+attr_index <- caret::createDataPartition(attrition$Attrition, times=1, p=.7, groups = 1, list = FALSE)
+train <- attrition[attr_index,]
+test_tune <- attrition[-attr_index,]
+ttind <- caret::createDataPartition(test_tune$Attrition, times=1, p=.5, groups = 1, list = FALSE)
+tune <- test_tune[ttind,]
+test <- test_tune[-ttind,]
+dim(train)
+dim(tune)
+dim(test)
+``` 
+
+#### Simple Classifier
+```{r, echo=FALSE}
+features <- train[,-2]
+target <- train$Attrition
+fitControl <- trainControl(method = "repeatedcv",
+                          number = 10,
+                          repeats = 5,
+                          classProbs = TRUE,
+                          summaryFunction = twoClassSummary) 
+attr_mdl <- train(x=features,
+                y=target,
+                method="rpart2",
+                trControl=fitControl,
+                metric="ROC")
+```
+This model provided an accuracy of 0.8597. However, the sensitivity (TPR) was 0.38 and the specificity (about 0.96) and this raises concerns that the model is overlearning the majority class.  Thus, this made us think to balance the dataset to prevent overlearning the majority class
+
+#### Balanced Dataset
+```{r, echo=FALSE}
+balanced_set <-  ovun.sample(Attrition~., data=train,
+                                N=nrow(train), p=0.5, 
+                                seed=1, method="both")$data
+
+table(balanced_set$Attrition)
+target_over <- balanced_set$Attrition
+balanced_features <- balanced_set[-2]
+over_sample_mdl <- train(x=balanced_features,
+                y=target_over,
+                method="rpart2",
+                trControl=fitControl,
+                metric="ROC") 
+
+```
+In an effort to mitigate the risk of overlearning the minority class, We trained another rpart2 model using a dataset where we oversample the minority class to make the dataset balanced. The new prevalence rate of the former minority class was now about 45%. Using this model to predict the test set, our sensitivity and specificity rates both converged around 0.72, but since accuracy dropped to 0.7466, this model was dropped.
+
+#### Restricted feature space
+```{r, echo=TRUE}
+used_vars <- c("MonthlyIncome", "TotalWorkingYears", "YearsWithCurrManager", "JobRole", "YearsAtCompany", "Age", "OverTime", "EnvironmentSatisfaction", "JobLevel", "NumCompaniesWorked")
+```
+
+```{r, include=FALSE}
+
+new_train <- train[used_vars]
+attr_mdl_cut <-train(x=new_train,
+                y=target,
+                method="rpart2",
+                trControl=fitControl,
+                metric="Sensitivity") 
+```
+Accuracy dropped to 0.8371. ROC was 0.69 (no increase from using the full feature set). Sensitivity and Specificity concerns persisted
+
+#### Expanded maxdepth 
+```{r}
+tree.grid <- expand.grid(maxdepth=c(3:20))
+attr_mdl_depth <- train(x=features,
+                y=target,
+                method="rpart2",
+                trControl=fitControl,
+                metric="ROC")
+```
+
+Selected maxdepth=16, Even with adjusting the maxdepth hyperparameter, the accuracy, sensitivity, and specificity mostly stayed the same. Sensitivity and Specificity concerns persisted
+
+#### Variable Importance
+
+```{r}
+varImp(attr_mdl)
+varImp(over_sample_mdl)
+varImp(attr_mdl_cut)
+varImp(attr_mdl_depth)
+```
+### Random Forest
+
+Our original Random Forest was so bad that we didn't even keep the code. It predicted that only 4 people at any 
+point would quit. We changed every parameter we could think of, but the simple truth was we didn't have enough data, our data was too imbalanced, and we had too many features. After re balancing the data and shoring up the feature space to test different rpart2 models, we decided to see how this would change our results with Random Forest.
+
+#### Original Parameters
+We used the MTry tune function to get a MTry of about 6. Additionally, we started with sample sizes of 100 and 1000 different trees. We saw increased success with this model, compared to the first RF atleast, but wanted to continue to tinker with the parameters.
+
+#### Changing Parameters
+We increased sample size from 100 to 200, OOB error dropped as we expected. Additionally, we dropped the number of trees from 1000 to 500.The high number of features and the relatively limited number of rows in this dataset meant that our random forest model was facing an overlearning problem. By changing the degrees of freedom ratio by restricting the number of features, we thought this would help mitigate the overlearning issue. 
+
+```{r, include=FALSE}
+balanced_cut <- balanced_set[used_vars]
+balanced_cut["Attrition"] <- balanced_set$Attrition
+mytry_tune <- function(x){
+  xx <- dim(x)[2]-1
+  sqrt(xx)
+}
+mytry_tune(balanced_set)
+cut_RF <- randomForest((Attrition)~., balanced_cut, ntree= 500, mtry=6, replace= TRUE, sampsize= 200, nodesize=5, importance= TRUE, proximity= FALSE, norm.votes= TRUE, do.trace= TRUE, keep.forest= TRUE, keep.inbag= TRUE)
+
+
+cut_rf_predict <-  predict(cut_RF,     
+                            tune,     
+                            type = "response",
+                            predict.all = TRUE)
+```
+
+```{r}
+confusionMatrix(as.factor(cut_rf_predict$aggregate), as.factor(tune$Attrition),positive = "Yes", dnn=c("Prediction", "Actual"), mode = "everything") 
+
+```
+This RF model produced accuracy = 0.78, Sensitivity=0.83, Specificity=0.78. Although using the balanced dataset improved the overlearning problem that we had, accuracy was worse than just guessing randomly.
+
+
+### KNN
+
+After having only marginal success with decision trees, we decided to move to a KNN approach. We were not able to get accuracy that was significantly above the No Information Rate. We figured that because our dataset was quite imbalanced, we would get a marginally better model with KNN.
+
+```{r, include=FALSE}
+
+#Normalizing data
+normalize <- function(x){
+  (x-min(x)) / (max(x) - min(x))
+}
+attrition_numeric_cols <- names(select_if(attrition, is.numeric))
+attrition_numeric_cols
+attrition_normalize <- attrition
+attrition_normalize[attrition_numeric_cols] <- lapply(attrition_normalize[attrition_numeric_cols], normalize)
+str(attrition_normalize)
+#Removing StandardHours and EmployeeCount as every value is NA and removing Over18 as every value is yes
+#Be mindful that these columns were already removed if you run this code from the top, my global variables still had these columns for some reason
+#attrition_normalize <- select(attrition_normalize, -c("StandardHours","Over18","EmployeeCount"))
+```
+
+
+```{r, include=FALSE}
+#One Hot encoding
+attrition_normalize_1h <- one_hot(as.data.table(attrition_normalize),cols = "auto",sparsifyNAs = TRUE,naCols = FALSE, dropCols = TRUE,dropUnusedLevels = TRUE)
+str(attrition_normalize_1h)
+#Removing one hot encode for negative instance of target variable
+# as this is perfectly correlated with positive instances of the target variable this will make the model reliant on data it wouldn't have in a real life application
+#Removing one hot encode for negative instance of Attrition_No, Gender_Male, OverTime_No, and PerformanceRating_3 as these all are factors with two options meaning the negative 1h encoded column is redundant
+attrition_normalize_1h <- select(attrition_normalize_1h, -c("Attrition_No","OverTime_No", "PerformanceRating_3"))
+str(attrition_normalize_1h)
+```
+
+
+```{r, include=FALSE}
+#Data Partitioning
+#take a part of the dataset that is 70% of the values in the dataset
+attrition_normalize_1h_70_pct_part <- caret::createDataPartition(attrition_normalize_1h$`Attrition_Yes`,
+                                           times=1,#number of splits
+                                           p = 0.70,#percentage of split
+                                           groups=1,
+                                           list=FALSE)
+attrition_normalize_1h_train <- attrition_normalize_1h[attrition_normalize_1h_70_pct_part,]
+attrition_normalize_1h_tune_and_test <- attrition_normalize_1h[-attrition_normalize_1h_70_pct_part,]
+attrition_normalize_1h_tune_and_test_index <- createDataPartition(attrition_normalize_1h_tune_and_test$`Attrition`,
+                                           p = .5,
+                                           list = FALSE,
+                                           times = 1)
+attrition_normalize_1h_tune <- attrition_normalize_1h_tune_and_test[attrition_normalize_1h_tune_and_test_index,]
+attrition_normalize_1h_test <- attrition_normalize_1h_tune_and_test[attrition_normalize_1h_tune_and_test_index,]
+dim(attrition_normalize_1h_train)
+dim(attrition_normalize_1h_tune)
+dim(attrition_normalize_1h_test)
+table(attrition_normalize_1h_train$Attrition_Yes)
+table(attrition_normalize_1h_tune$Attrition_Yes)
+table(attrition_normalize_1h_test$Attrition_Yes)
+#Prevalence rates are approximately equal
+```
+#### Selecting the correct k
+```{r}
+chooseK <- function(k, train_set, val_set, train_class, val_class){
+  set.seed(011001)
+  class_knn = knn(train = train_set,
+                  test = val_set,
+                  cl = train_class,
+                  k = k,
+                  use.all = TRUE)
+  confusion_matrix = table(class_knn, val_class)
+  
+  #calculate accuracy
+  accuracy = sum(confusion_matrix[row(confusion_matrix) == col(confusion_matrix)]) / sum(confusion_matrix)
+  cbind( k = k, accuracy = accuracy)
+}
+knn_k_tryer = sapply(seq(1,21, by = 2), 
+                     function(x) chooseK(x,
+                      train_set = attrition_normalize_1h_train,
+                      val_set = attrition_normalize_1h_tune,
+                      train_class = attrition_normalize_1h_train$Attrition_Yes,
+                      val_class = attrition_normalize_1h_tune$Attrition_Yes))
+view(knn_k_tryer)
+#preparing accuracy data at different k values for graphing
+knn_k_tryer = tibble(k = knn_k_tryer[1,],
+                             accuracy = knn_k_tryer[2,])
+ggplot(knn_k_tryer,
+       aes(x = k, y = accuracy)) +
+  geom_line(color = "orange", size = 1.5) +
+  geom_point(size = 3)
+```
+
+
+#### Model Output
+
+```{r}
+attrition_3NN <- knn(train = attrition_normalize_1h_train,
+                test = attrition_normalize_1h_tune,
+                cl = attrition_normalize_1h_train$Attrition_Yes,
+                k = 3,
+                use.all = TRUE,
+                prob = TRUE) 
+#viewing output
+
+confusionMatrix(as.factor(attrition_3NN), as.factor(attrition_normalize_1h_tune$Attrition_Yes), positive = "1", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+```
+
+#### Evaluation Metrics
+
+```{r, include= FALSE}
+attrition_3NN_prob <- tibble(attr(attrition_3NN, "prob"))
+attrition_3NN_final <- tibble(k_prob=attrition_3NN_prob$`attr(attrition_3NN, "prob")`,pred=attrition_3NN,target=attrition_normalize_1h_tune$Attrition_Yes)
+attrition_3NN_final$pos_prec <- ifelse(attrition_3NN_final$pred == 0, 1-attrition_3NN_final$k_prob, attrition_3NN_final$k_prob)
+```
+After Finalizing our KNN model we evaluated based on the following additional metrics:
+
+##### LogLoss:
+```{r, include=FALSE}
+LogLoss(as.numeric(attrition_3NN_final$pos_prec), as.numeric(attrition_3NN_final$target))
+#baseline is the negative baseline of the prevalnce
+-log(.1629)
+```
+Shown above is our LogLoss followed by the baseline. Our LogLoss of .89 is significantly lower than our baseline LogLoss rate of 1.8. This is encouraging because it means that our model is not highly confident in its classifications in the wrong direction. With such an imbalanced dataset, we were quite satisfied with this metric.
+
+##### F1 Score
+
+```{r, include=FALSE}
+F1_Score(y_pred = attrition_3NN_final$pred, y_true = attrition_3NN_final$target, positive = "1")
+#table(attrition$Attrition)
+#237/(1233+237)
+#precision = 0.1612
+#237/237
+#recall = 1
+#f1 = 2*(0.1612*1) / (0.1612+1)
+2*(0.1612*1) / (0.1612+1)
+#baseline f1 score = 0.2776
+```
+
+Our F1 Score of .62 is much higher than the baseline F1 we calculated of .2776. This is additionally encouraging given the imbalance of our dataset. 
+
+## Conclusion and Future Work
+
+### Conclusion
+
+In the end, we built a model that is quite successful at predicting attrition. Based on the business value of predicting attrition, we wanted our model to be quite certain that it would predict every person that was going to leave, even if this led to some false positives. This is important given how much more expensive it would be to retrain new employees as compared to targeted salary raises to convince current employees to stay. Our data set was challenging: it contained relatively little data and the data it did contain was quite overbalanced. Because of this imbalance, we really struggled to beat the no information rate with decision trees. Ensemble methods were messy and worse than our individual trees: even after balancing our data set and reducing the feature space. Ultimately we had the most success with a KNN model, at a relatively low K. This model is advantageous because it is uncomplicated and predicts significantly better than the no information rate and any other model we built. This model will save this company money: they will be able to predict and incentivize employees likely to leave in order to avoid retraining and high turnover.
+
+### Future Work
+
+Future work that would benefit this model would be gathering more data. We had a small dataset that made many advanced methods challenging to use. Especially with a dataset so imbalanced, it would be quite beneficial to gather more data. Additionally, with more company specific data, this model could be modified to ensure profitability (in the sense of giving employees raises vs. letting them leave). Models that failed to meet certain metrics could be further tailored to a companies desires. 
