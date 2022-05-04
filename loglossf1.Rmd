@@ -20,6 +20,10 @@ attrition_5NN_final$pos_prec <- ifelse(attrition_5NN_final$pred == 0, 1-attritio
 
 LogLoss(as.numeric(attrition_5NN_final$pos_prec), as.numeric(attrition_5NN_final$target))
 
+#baseline is the negative baseline of the prevalnce
+-log(.1629)
+#1.814619
+
 F1_Score(y_pred = attrition_5NN_final$pred, y_true = attrition_5NN_final$target, positive = "1")
 
 table(attrition$Attrition)
